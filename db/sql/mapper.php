@@ -25,6 +25,11 @@ namespace DB\SQL;
 //! SQL data mapper
 class Mapper extends \DB\Cursor {
 
+	const
+		JOIN_Left='LEFT',
+		JOIN_Right='RIGHT',
+		JOIN_Inner='INNER';
+
 	protected
 		//! PDO wrapper
 		$db,
@@ -34,6 +39,8 @@ class Mapper extends \DB\Cursor {
 		$source,
 		//! SQL table (quoted)
 		$table,
+		//! SQL joins
+		$joins,
 		//! Last insert ID
 		$_id,
 		//! Defined fields
@@ -194,6 +201,19 @@ class Mapper extends \DB\Cursor {
 	}
 
 	/**
+	*	Define a SQL join
+	*	@param string|array $table
+	*	@param array $relations
+	*	@param string $type
+	**/
+	function join($table,array $relations,$type=self::JOIN_Left) {
+		if (!is_array($table))
+			$table=[$table];
+		list($name,$alias)=$table;
+		$this->joins[]=[$this->db->quotekey($name),$alias?$this->db->quotekey($alias):NULL,$relations,$type];
+	}
+
+	/**
 	*	Build query string and arguments
 	*	@return array
 	*	@param $fields string
@@ -211,6 +231,15 @@ class Mapper extends \DB\Cursor {
 		];
 		$db=$this->db;
 		$sql='SELECT '.$fields.' FROM '.$this->table;
+		foreach ($this->joins as $join) {
+			list($name,$alias,$relations,$type)=$join;
+			$sql.=' '.$type.' JOIN '.$name.($alias?' AS '.$alias:'');
+			$i=0;
+			foreach ($relations as $left=>$right)
+				$sql.=($i++?' AND ':' ON ').
+					(strpos($left,'.')===FALSE?$this->table.'.':'').$this->db->quotekey($left).'='.
+					(strpos($right,'.')===FALSE?($alias?:$name).'.':'').$this->db->quotekey($right);
+		}
 		$args=[];
 		if (is_array($filter)) {
 			$args=isset($filter[1]) && is_array($filter[1])?
@@ -333,8 +362,9 @@ class Mapper extends \DB\Cursor {
 		return $this->select(
 			($options['group'] && !preg_match('/mysql|sqlite/',$this->engine)?
 				$options['group']:
-				implode(',',array_map([$this->db,'quotekey'],
-					array_keys($this->fields)))).$adhoc,$filter,$options,$ttl);
+				implode(',',array_map(function($field){
+					return ($this->joins?$this->table.'.':'').$this->db->quotekey($field);
+				},array_keys($this->fields)))).$adhoc,$filter,$options,$ttl);
 	}
 
 	/**
@@ -665,6 +695,7 @@ class Mapper extends \DB\Cursor {
 			$table=strtoupper($table);
 		$this->source=$table;
 		$this->table=$this->db->quotekey($table);
+		$this->joins=[];
 		$this->fields=$db->schema($table,$fields,$ttl);
 		$this->reset();
 	}
